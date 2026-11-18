@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>InsightBoard – Data Visualization Service</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--bg:#f5f6fa;--card:#fff;--tx:#1d2330;--mut:#6b7385;--bd:#e2e5ee;--pri:#4f6df5;--dan:#e5484d}
+@media(prefers-color-scheme:dark){:root{--bg:#12151c;--card:#1b2029;--tx:#e8ebf2;--mut:#8b93a7;--bd:#2a3140;--pri:#6f86ff}}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--tx)}
+header{display:flex;align-items:center;gap:8px;padding:12px 20px;background:var(--card);border-bottom:1px solid var(--bd);flex-wrap:wrap}
+header b{font-size:18px;margin-right:16px;color:var(--pri)}
+nav button{background:none;border:0;color:var(--mut);padding:8px 12px;border-radius:8px;cursor:pointer;font-size:14px}
+nav button.on{background:var(--pri);color:#fff}.sp{flex:1}
+main{padding:20px;max-width:1200px;margin:auto}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px}
+.grid .card{margin:0}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}
+.stat{margin:0}.stat span{display:block;color:var(--mut);font-size:13px}.stat strong{display:block;font-size:26px;margin-top:4px}
+.dashboard-preview th,.dashboard-preview td{white-space:nowrap}
+input,select,button.b{padding:9px 11px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font-size:14px}
+button.b{background:var(--pri);color:#fff;border:0;cursor:pointer}button.b.d{background:var(--dan)}button.b.g{background:var(--bg);color:var(--tx);border:1px solid var(--bd)}
+label{font-size:12px;color:var(--mut);display:block;margin-bottom:4px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}.row>div{min-width:140px}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:7px 10px;border-bottom:1px solid var(--bd);text-align:left}
+.sc{overflow-x:auto}h2,h3{margin:0 0 12px}.mut{color:var(--mut);font-size:13px}
+.auth{max-width:360px;margin:10vh auto}.auth input{width:100%;margin-bottom:10px}
+.tag{padding:2px 8px;border-radius:99px;background:var(--bg);border:1px solid var(--bd);font-size:12px}
+.cv{position:relative;height:280px}
+</style></head><body><div id="app"></div>
+<script>
+const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const E={users:[],datasets:[],charts:[]};
+let db=E,token='';try{token=localStorage.getItem('ib_t')||''}catch(e){}
+let me=null,view='dash',inst=[],bs={type:'bar',agg:'sum',title:''};
+
+async function api(m,u,b){const r=await fetch(u,{method:m,headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:b?JSON.stringify(b):undefined});
+ const j=await r.json().catch(()=>({}));if(!r.ok){if(r.status===401){token='';me=null;render()}else alert(j.error||'Request failed');throw new Error(j.error)}return j}
+async function refresh(){const s=await api('GET','/api/state');me=s.me;db={users:s.users,datasets:s.datasets,charts:s.charts}}
+async function boot(){if(token){try{await refresh()}catch(e){me=null}}render()}
+const uid=()=>Math.random().toString(36).slice(2,9);
+const hash=async s=>{try{const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}catch(e){return btoa(s)}};
+const can=r=>me&&(me.role==='admin'||(r==='edit'&&me.role==='editor'));
+const COL=['#4f6df5','#22c1a0','#f5a623','#e5484d','#9b59f5','#16a8e0','#7cc243','#f06292','#8d6e63','#607d8b'];
+
+/* ---------- auth ---------- */
+function authView(mode='login',err=''){
+ $('#app').innerHTML=`<div class="card auth"><h2>InsightBoard</h2><p class="mut">${mode==='login'?'Sign in to your account':'Create an account (first user becomes admin)'}</p>
+ <input id="u" placeholder="Username"><input id="p" type="password" placeholder="Password">
+ <div style="color:var(--dan);margin-bottom:8px">${err}</div>
+ <button class="b" style="width:100%" id="go">${mode==='login'?'Sign in':'Register'}</button>
+ <p class="mut" style="text-align:center;cursor:pointer" id="sw">${mode==='login'?'No account? Register':'Have an account? Sign in'}</p></div>`;
+ $('#sw').onclick=()=>authView(mode==='login'?'reg':'login');
+ $('#go').onclick=async()=>{try{const r=await fetch('/api/'+(mode==='login'?'login':'register'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('#u').value.trim(),pass:$('#p').value})});
+  const j=await r.json();if(!r.ok)return authView(mode,esc(j.error||'Error'));token=j.token;try{localStorage.setItem('ib_t',token)}catch(e){}await refresh();view='dash';render()}catch(e){authView(mode,'Server unreachable')}}
+};
+
+/* ---------- data helpers ---------- */
+const isNum=v=>v!==null&&v!==''&&!isNaN(+v);
+function colType(rows,c){const v=rows.map(r=>r[c]).filter(x=>x!==null&&x!=='');return v.length&&v.filter(isNum).length/v.length>.8?'number':'text'}
+function parseFile(f,cb){
+ const r=new FileReader();r.onload=e=>{try{
+  const wb=XLSX.read(e.target.result,{type:'array',cellDates:true}),ws=wb.Sheets[wb.SheetNames[0]];
+  let rows=XLSX.utils.sheet_to_json(ws,{defval:null}).slice(0,5000);
+  rows=rows.map(o=>{for(const k in o)if(o[k] instanceof Date)o[k]=o[k].toISOString().slice(0,10);return o});
+  if(!rows.length)throw 0;const cols=Object.keys(rows[0]);
+  cb({id:uid(),name:f.name,cols,types:Object.fromEntries(cols.map(c=>[c,colType(rows,c)])),rows,owner:me.id})
+ }catch(x){alert('Could not read file. Use CSV or XLSX with a header row.')}};r.readAsArrayBuffer(f)}
+function sample(){
+ const m=['Jan','Feb','Mar','Apr','May','Jun'],rg=['North','South','East','West'],rows=[];
+ m.forEach(a=>rg.forEach(b=>rows.push({Month:a,Region:b,Sales:Math.round(500+Math.random()*1500),Orders:Math.round(20+Math.random()*80)})));
+ const cols=Object.keys(rows[0]);return{id:uid(),name:'sample_sales.csv',cols,types:Object.fromEntries(cols.map(c=>[c,colType(rows,c)])),rows,owner:me.id}}
+function agg(ds,x,y,a){
+ const g=new Map();ds.rows.forEach(r=>{const k=String(r[x]??'—');if(!g.has(k))g.set(k,[]);g.get(k).push(+r[y]||0)});
+ const out=[...g].slice(0,50).map(([k,v])=>[k,a==='count'?v.length:a==='avg'?v.reduce((s,n)=>s+n,0)/v.length:a==='max'?Math.max(...v):v.reduce((s,n)=>s+n,0)]);
+ return out}
+function cfg(c){
+ const ds=db.datasets.find(d=>d.id===c.ds);if(!ds||!c.x)return null;
+ if(c.type==='scatter')return{type:'scatter',data:{datasets:[{label:`${c.y} vs ${c.x}`,data:ds.rows.filter(r=>isNum(r[c.x])&&isNum(r[c.y])).map(r=>({x:+r[c.x],y:+r[c.y]})),backgroundColor:COL[0]}]},options:{maintainAspectRatio:false}};
+ const a=agg(ds,c.x,c.y,c.agg),pie=c.type==='pie'||c.type==='doughnut';
+ return{type:c.type,data:{labels:a.map(r=>r[0]),datasets:[{label:c.agg==='count'?'count':`${c.agg}(${c.y})`,data:a.map(r=>+r[1].toFixed(2)),backgroundColor:pie?a.map((_,i)=>COL[i%10]):COL[0]+'cc',borderColor:COL[0],tension:.3,fill:c.type==='line'?false:undefined}]},options:{maintainAspectRatio:false,plugins:{legend:{display:pie||false}}}}}
+function draw(cv,c){const k=cfg(c);if(!k)return;inst.push(new Chart(cv,k))}
+const clear=()=>{inst.forEach(i=>i.destroy());inst=[]};
+
+/* ---------- views ---------- */
+function render(){
+ clear();if(!me)return authView();
+ const tabs=[['dash','Dashboard'],...(can('edit')?[['data','Datasets'],['build','Chart builder']]:[]),...(can()?[['admin','Admin']]:[])];
+ $('#app').innerHTML=`<header><b>◔ InsightBoard</b><nav>${tabs.map(t=>`<button class="${view===t[0]?'on':''}" data-v="${t[0]}">${t[1]}</button>`).join('')}</nav><span class="sp"></span>
+ <span class="mut">${esc(me.name)} <span class="tag">${me.role}</span></span><button class="b g" id="lo">Logout</button></header><main id="m"></main>`;
+ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{view=b.dataset.v;render()});
+ $('#lo').onclick=()=>{me=null;token='';try{localStorage.removeItem('ib_t')}catch(e){}render()};
+ ({dash,data:dataV,build:buildV,admin:adminV})[view]()}
+
+function dash(){
+ const m=$('#m');
+ if(!db.charts.length&&!db.datasets.length){m.innerHTML=`<div class="card"><h3>Dashboard is empty</h3><p class="mut">${can('edit')?'Upload a dataset and build your first chart.':'Ask an editor or admin to publish charts.'}</p></div>`;return}
+ m.innerHTML=`<div class="stats"><div class="card stat"><span>Datasets</span><strong>${db.datasets.length}</strong></div><div class="card stat"><span>Total rows</span><strong>${db.datasets.reduce((n,d)=>n+d.rows.length,0).toLocaleString()}</strong></div><div class="card stat"><span>Data columns</span><strong>${db.datasets.reduce((n,d)=>n+d.cols.length,0).toLocaleString()}</strong></div><div class="card stat"><span>Charts</span><strong>${db.charts.length}</strong></div></div>
+ ${db.charts.length?`<h2>Charts</h2><div class="grid" style="margin-bottom:20px">${db.charts.map(c=>`<div class="card"><div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px"><b>${esc(c.title)}</b>${can()||(can('edit')&&c.owner===me.id)?`<button class="b d" data-del="${c.id}">✕</button>`:''}</div><div class="cv"><canvas id="c${c.id}"></canvas></div></div>`).join('')}</div>`:''}
+ ${db.datasets.length?`<h2>Data preview</h2><div class="grid">${db.datasets.map(d=>`<div class="card"><div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px"><b>${esc(d.name)}</b><span class="mut">${d.rows.length} rows · ${d.cols.length} columns</span></div><div class="sc dashboard-preview"><table><tr>${d.cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>${d.rows.slice(0,5).map(r=>`<tr>${d.cols.map(c=>`<td>${esc(r[c])}</td>`).join('')}</tr>`).join('')}</table></div>${d.rows.length>5?`<p class="mut" style="margin-bottom:0">Showing 5 of ${d.rows.length} rows</p>`:''}</div>`).join('')}</div>`:''}
+ ${!db.charts.length&&db.datasets.length?`<div class="card"><p class="mut" style="margin:0">Your data is loaded. Create and save a chart in Chart builder to add visualizations here.</p></div>`:''}`;
+ db.charts.forEach(c=>draw($('#c'+c.id),c));
+ m.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{await api('DELETE','/api/charts/'+b.dataset.del);await refresh();render()})}
+
+function dataV(){
+ const m=$('#m');
+ m.innerHTML=`<div class="card"><h3>Upload dataset</h3><div class="row"><input type="file" id="f" accept=".csv,.xlsx,.xls"><button class="b g" id="smp">Load sample data</button></div></div>
+ ${db.datasets.map(d=>`<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><b>${esc(d.name)}</b><span class="mut">${d.rows.length} rows · ${d.cols.length} columns</span>${can()||d.owner===me.id?`<button class="b d" data-del="${d.id}">Delete</button>`:''}</div>
+ <p class="mut">${d.cols.map(c=>`${esc(c)} <span class="tag">${d.types[c]}</span>`).join(' ')}</p>
+ <div class="sc"><table><tr>${d.cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>${d.rows.slice(0,5).map(r=>`<tr>${d.cols.map(c=>`<td>${esc(r[c])}</td>`).join('')}</tr>`).join('')}</table></div></div>`).join('')}`;
+ $('#f').onchange=e=>{const f=e.target.files[0];if(f)parseFile(f,async d=>{await api('POST','/api/datasets',d);await refresh();render()})};
+ $('#smp').onclick=async()=>{await api('POST','/api/datasets',sample());await refresh();render()};
+ m.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{await api('DELETE','/api/datasets/'+b.dataset.del);await refresh();render()})}
+
+function buildV(){
+ const m=$('#m');if(!db.datasets.length){m.innerHTML='<div class="card">Upload a dataset first (Datasets tab).</div>';return}
+ if(!db.datasets.find(d=>d.id===bs.ds)){bs.ds=db.datasets[0].id;bs.x=bs.y=null}
+ const ds=db.datasets.find(d=>d.id===bs.ds),num=ds.cols.filter(c=>ds.types[c]==='number');
+ if(!ds.cols.includes(bs.x))bs.x=ds.cols[0];if(!ds.cols.includes(bs.y))bs.y=num[0]||ds.cols[0];
+ const sel=(id,l,o,v)=>`<div><label>${l}</label><select id="${id}">${o.map(x=>`<option ${x===v?'selected':''}>${esc(x)}</option>`).join('')}</select></div>`;
+ m.innerHTML=`<div class="card"><div class="row"><div><label>Dataset</label><select id="ds">${db.datasets.map(d=>`<option value="${d.id}" ${d.id===bs.ds?'selected':''}>${esc(d.name)}</option>`).join('')}</select></div>
+ ${sel('type','Chart type',['bar','line','pie','doughnut','scatter'],bs.type)}${sel('x','X / Category',ds.cols,bs.x)}${sel('y','Y / Value',ds.cols,bs.y)}${sel('agg','Aggregation',['sum','avg','max','count'],bs.agg)}</div></div>
+ <div class="card"><div class="cv"><canvas id="pv"></canvas></div><div class="row" style="margin-top:12px"><div style="flex:1"><label>Title</label><input id="ti" style="width:100%" value="${esc(bs.title)}" placeholder="Chart title"></div><button class="b" id="sv">Add to dashboard</button></div></div>`;
+ ['ds','type','x','y','agg'].forEach(k=>$('#'+k).onchange=e=>{bs[k]=e.target.value;if(k==='ds')bs.x=bs.y=null;buildV()});
+ $('#ti').oninput=e=>bs.title=e.target.value;
+ draw($('#pv'),bs);
+ $('#sv').onclick=async()=>{await api('POST','/api/charts',{title:bs.title||`${bs.agg} of ${bs.y} by ${bs.x}`,type:bs.type,ds:bs.ds,x:bs.x,y:bs.y,agg:bs.agg});bs.title='';await refresh();view='dash';render()}}
+
+function adminV(){
+ const m=$('#m');
+ m.innerHTML=`<div class="card"><h3>Users & roles</h3><div class="sc"><table><tr><th>User</th><th>Role</th><th></th></tr>${db.users.map(u=>`<tr><td>${esc(u.name)}</td><td><select data-r="${u.id}" ${u.id===me.id?'disabled':''}>${['admin','editor','viewer'].map(r=>`<option ${u.role===r?'selected':''}>${r}</option>`).join('')}</select></td><td>${u.id===me.id?'':`<button class="b d" data-u="${u.id}">Remove</button>`}</td></tr>`).join('')}</table></div></div>
+ <div class="card"><h3>Overview</h3><p class="mut">${db.users.length} users · ${db.datasets.length} datasets · ${db.charts.length} charts</p>
+ <p class="mut"><b>admin</b>: everything · <b>editor</b>: upload data, build charts, delete own items · <b>viewer</b>: view dashboard only</p></div>`;
+ m.querySelectorAll('[data-r]').forEach(s=>s.onchange=async()=>{await api('PUT','/api/users/'+s.dataset.r+'/role',{role:s.value});await refresh()});
+ m.querySelectorAll('[data-u]').forEach(b=>b.onclick=async()=>{await api('DELETE','/api/users/'+b.dataset.u);await refresh();render()})}
+
+boot();
+</script></body></html>
