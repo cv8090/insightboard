@@ -1,15 +1,39 @@
-# InsightBoard – data visualization service (DataLens-style)
+# InsightBoard — визуализация данных
 
-Node.js + Express + SQLite. Upload CSV/XLSX, build charts, save them to a dashboard, role-based access (admin / editor / viewer).
+Веб-приложение для загрузки CSV/XLSX-файлов, создания графиков и просмотра данных на панели. Интерфейс и сообщения приложения доступны на русском языке.
 
-## Run
-    npm install
-    JWT_SECRET=change-me npm start      # Windows PowerShell: $env:JWT_SECRET="change-me"; npm start
-Open http://localhost:3000. The first registered user becomes admin; later users are editors (admin can change roles in the Admin tab).
+## Запуск
 
-## Structure
-- server.js – REST API, JWT auth, SQLite (data.db is created automatically)
-- public/index.html – frontend (Chart.js + SheetJS from CDN, so internet is needed)
+Установите Node.js, затем выполните в папке проекта:
 
-## API
-POST /api/register, /api/login · GET /api/state · POST/DELETE /api/datasets · POST/DELETE /api/charts · PUT /api/users/:id/role · DELETE /api/users/:id
+```powershell
+npm install
+$env:JWT_SECRET="замените-на-длинный-случайный-секрет"
+npm start
+```
+
+Откройте http://localhost:3000. Первый зарегистрированный пользователь становится администратором. База данных SQLite создаётся автоматически при запуске; её файл и загруженные данные не входят в репозиторий.
+
+## Возможности
+
+- Загрузка CSV и Excel-файлов (до 5000 строк).
+- Столбчатые, линейные, круговые, кольцевые и точечные графики.
+- Сравнение двух наборов данных на одном графике для столбчатого, линейного и точечного типов.
+- Нижняя и верхняя границы для графика. На панели отображаются оповещения, если значения выходят за эти границы.
+- Управление пользователями и ролями на странице администрирования.
+
+## Роли
+
+- **Администратор** — полный доступ, включая создание пользователей и назначение ролей.
+- **Редактор** — загрузка данных и создание графиков.
+- **Наблюдатель** — просмотр панели.
+
+Администратор создаёт учётные записи и выбирает для них роль на вкладке «Администрирование».
+
+## Структура
+
+- `server.js` — REST API, авторизация и SQLite.
+- `public/index.html` — интерфейс приложения.
+- `data.db` — локальная база данных, создаётся при первом запуске и исключена из Git.
+
+Для графиков и чтения Excel используются Chart.js и SheetJS с CDN, поэтому браузеру требуется подключение к интернету.
